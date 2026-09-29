@@ -1,35 +1,51 @@
-
-import { NextResponse } from 'next/server'
-import { getSupabase } from '../../../lib/supabase.js'
+export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req) {
   try {
-    const body = await req.json()
-    let { tenant_id, customer_name, customer_phone, datetime_iso, service_name } = body
-    const supabase = getSupabase()
+    const body = await req.json();
     
-    if (!supabase) {
-      return NextResponse.json({ success: true, message: `Prenotato ${service_name} per ${customer_name} (test mode)` })
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ error: 'Missing supabase env' }, { status: 500 });
     }
 
-    if (!tenant_id) {
-      const { data } = await supabase.from('tenants').select('id').limit(1).single()
-      tenant_id = data?.id
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Accept both old and new field names
+    const dataToInsert = {
+      tenant_id: body.tenant_id,
+      from_number: body.from_number || body.customer_phone || null,
+      caller_name: body.caller_name || body.customer_name || null,
+      service_booked: body.service_booked || body.service_name || null,
+      booking_time: body.booking_time || new Date().toISOString(),
+      status: body.status || 'booked',
+      customer_name: body.customer_name || body.caller_name || null,
+      customer_phone: body.customer_phone || body.from_number || null,
+      service_name: body.service_name || body.service_booked || null,
+    };
+
+    if (!dataToInsert.tenant_id) {
+      return NextResponse.json({ error: 'tenant_id required' }, { status: 400 });
     }
 
-    const { data, error } = await supabase.from('calls').insert({
-      tenant_id,
-      from_number: customer_phone || 'unknown',
-      caller_name: customer_name || 'Cliente',
-      service_booked: service_name || 'Taglio',
-      booking_time: datetime_iso || new Date().toISOString(),
-      status: 'booked',
-      intent: 'booking'
-    }).select().single()
+    const { data, error } = await supabase
+      .from('calls')
+      .insert(dataToInsert)
+      .select()
+      .single();
 
-    if (error) throw error
-    return NextResponse.json({ success: true, booking_id: data.id, message: `Perfetto ${customer_name}, prenotato!` })
-  } catch(e) {
-    return NextResponse.json({ success: false, error: e.message }, { status: 200 })
+    if (error) {
+      console.error('Supabase insert error', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, data });
+  } catch (err) {
+    console.error('BOOK API ERROR', err);
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
