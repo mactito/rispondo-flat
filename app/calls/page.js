@@ -3,56 +3,176 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from "react";
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL, 
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 export default function CallsPage() {
   const [calls, setCalls] = useState([]);
   const [tenant, setTenant] = useState(null);
-  const [debug, setDebug] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { window.location.href = "/signup"; return; }
-      
-      // Try profile
-      let { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      
-      // AUTO-REPAIR: if no profile, find tenant by email and create profile (auto)
-      if(!profile){
-        const { data: tenantByEmail } = await supabase.from('tenants').select('*').eq('email', user.email).order('created_at',{ascending:false}).limit(1).single();
-        if(tenantByEmail){
-          await supabase.from('profiles').insert({ id: user.id, email: user.email, tenant_id: tenantByEmail.id, is_paid: true });
-          profile = { tenant_id: tenantByEmail.id };
+
+      // Get profile
+      let { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      // AUTO-REPAIR: if profile missing, find latest tenant and link it
+      if (!profile) {
+        const { data: latestTenant } = await supabase
+          .from('tenants')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (latestTenant) {
+          await supabase.from('profiles').insert({ 
+            id: user.id, 
+            email: user.email, 
+            tenant_id: latestTenant.id, 
+            is_paid: true 
+          });
+          profile = { tenant_id: latestTenant.id };
         }
       }
 
-      if (!profile?.tenant_id) { setLoading(false); return; }
-      const { data: tenantData } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single();
+      if (!profile?.tenant_id) { 
+        setLoading(false); 
+        return; 
+      }
+
+      // Get tenant using your actual columns
+      const { data: tenantData } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', profile.tenant_id)
+        .single();
+      
       setTenant(tenantData);
-      const { data: callsData } = await supabase.from('calls').select('*').eq('tenant_id', profile.tenant_id).order('created_at', { ascending: false });
+
+      // Get calls for this tenant
+      const { data: callsData } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id)
+        .order('created_at', { ascending: false });
+      
       setCalls(callsData || []);
       setLoading(false);
     }
     load();
   }, []);
 
-  if (loading) return <div style={{padding:32}}>Loading...</div>;
+  if (loading) {
+    return <div style={{ padding: 32, fontFamily: 'monospace' }}>Loading dashboard...</div>;
+  }
+
+  if (!tenant) {
+    return <div style={{ padding: 32 }}>Nessun negozio trovato. Vai su /signup</div>;
+  }
 
   return (
-    <div style={{minHeight:'100vh', background:'#f8fafc', padding:24, fontFamily:'system-ui'}}>
-      <div style={{maxWidth:900, margin:'0 auto'}}>
-        <h1 style={{fontWeight:900, fontSize:28}}>{tenant?.name} - Dashboard</h1>
-        <div style={{marginTop:16, fontSize:12, fontFamily:'monospace', background:'black', color:'#22c55e', padding:12, borderRadius:12, wordBreak:'break-all'}}>
-          TENANT_ID: {tenant?.id}<br/>
-          VAPI URL: https://rispondo-flat-g7ns.vercel.app/api/book?tenant_id={tenant?.id}
+    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: 24, fontFamily: 'system-ui' }}>
+      <div style={{ maxWidth: 900, margin: '0 auto' }}>
+        
+        <h1 style={{ fontWeight: 900, fontSize: 28, margin: 0 }}>
+          {tenant.business_name} - Dashboard
+        </h1>
+        <p style={{ color: '#64748b', marginTop: 4 }}>
+          {tenant.city || 'Comacchio'} • {tenant.category || 'salone'}
+        </p>
+
+        {/* VAPI URL BOX */}
+        <div style={{ 
+          marginTop: 16, 
+          fontSize: 12, 
+          fontFamily: 'monospace', 
+          background: 'black', 
+          color: '#22c55e', 
+          padding: 12, 
+          borderRadius: 12, 
+          wordBreak: 'break-all' 
+        }}>
+          <div>TENANT_ID: {tenant.id}</div>
+          <div style={{ marginTop: 8, color: 'white' }}>
+            VAPI SERVER URL:<br/>
+            https://rispondo-flat-g7ns.vercel.app/api/book?tenant_id={tenant.id}
+          </div>
         </div>
-        <div style={{background:'white', border:'1px solid #e2e8f0', borderRadius:16, marginTop:16, overflow:'hidden'}}>
-          <div style={{padding:16, fontWeight:700}}>Prenotazioni ({calls.length})</div>
-          {calls.length===0? <div style={{padding:40, textAlign:'center', color:'#94a3b8'}}>Nessuna prenotazione</div> :
-            <table style={{width:'100%', fontSize:14}}><tbody>{calls.map(c=><tr key={c.id}><td style={{padding:12}}>{c.caller_name} - {c.service_booked}</td></tr>)}</tbody></table>}
+
+        {/* BOOKINGS TABLE */}
+        <div style={{ 
+          background: 'white', 
+          border: '1px solid #e2e8f0', 
+          borderRadius: 16, 
+          marginTop: 16, 
+          overflow: 'hidden' 
+        }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', fontWeight: 700 }}>
+            Prenotazioni ({calls.length})
+          </div>
+          
+          {calls.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>
+              Nessuna prenotazione ancora.<br/>
+              <span style={{ fontSize: 12 }}>Le chiamate Vapi appariranno qui automaticamente</span>
+            </div>
+          ) : (
+            <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+              <thead style={{ background: '#f8fafc', textAlign: 'left' }}>
+                <tr>
+                  <th style={{ padding: 12 }}>Cliente</th>
+                  <th style={{ padding: 12 }}>Telefono</th>
+                  <th style={{ padding: 12 }}>Servizio</th>
+                  <th style={{ padding: 12 }}>Data</th>
+                  <th style={{ padding: 12 }}>Stato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {calls.map((c) => (
+                  <tr key={c.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: 12, fontWeight: 600 }}>{c.caller_name}</td>
+                    <td style={{ padding: 12 }}>{c.from_number}</td>
+                    <td style={{ padding: 12 }}>{c.service_booked}</td>
+                    <td style={{ padding: 12 }}>
+                      {c.booking_time ? new Date(c.booking_time).toLocaleString('it-IT') : '-'}
+                    </td>
+                    <td style={{ padding: 12 }}>
+                      <span style={{ 
+                        background: '#dcfce7', 
+                        color: '#166534', 
+                        padding: '4px 8px', 
+                        borderRadius: 6, 
+                        fontSize: 12 
+                      }}>
+                        {c.status || 'confirmed'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
+
+        <div style={{ marginTop: 20, textAlign: 'center' }}>
+          <button 
+            onClick={async () => { await supabase.auth.signOut(); window.location.href = '/'; }}
+            style={{ fontSize: 13, color: '#64748b', background: 'none', border: 0, cursor: 'pointer', textDecoration: 'underline' }}
+          >
+            Logout
+          </button>
+        </div>
+
       </div>
     </div>
   );
