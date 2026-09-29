@@ -9,6 +9,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from('calls')
     .select('*')
+    .not('tenant_id', 'is', null) // hide test rows
     .order('created_at', { ascending: false })
     .limit(100)
 
