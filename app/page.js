@@ -1,0 +1,1 @@
+export default function Home(){ return <div style={{fontFamily:'sans-serif',padding:40}}><h1>Rispondo API running ✅</h1><p>/api/check-availability<br/>/api/book<br/>/api/health</p></div> }
