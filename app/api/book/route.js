@@ -1,51 +1,51 @@
-export const dynamic = 'force-dynamic';
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
-export async function POST(req) {
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // <-- MUST be service role, not anon
+)
+
+const DEFAULT_TENANT_ID = '79cd8e54-0b41-4089-84b1-b144b4fd2562'
+
+export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const body = await req.json()
+    console.log("VAPI BODY:", JSON.stringify(body))
 
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ error: 'Missing supabase env' }, { status: 500 });
+    let data: any = body
+    if (body.message?.toolCalls?.[0]?.function?.arguments) {
+      const args = body.message.toolCalls[0].function.arguments
+      data = typeof args === 'string'? JSON.parse(args) : args
+    }
+    if (body.toolCallList?.[0]?.function?.arguments) {
+      const args = body.toolCallList[0].function.arguments
+      data = typeof args === 'string'? JSON.parse(args) : args
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const finalTenantId = data.tenant_id || DEFAULT_TENANT_ID
 
-    // Accept both old and new field names
-    const dataToInsert = {
-      tenant_id: body.tenant_id,
-      from_number: body.from_number || body.customer_phone || null,
-      caller_name: body.caller_name || body.customer_name || null,
-      service_booked: body.service_booked || body.service_name || null,
-      booking_time: body.booking_time || new Date().toISOString(),
-      status: body.status || 'booked',
-      customer_name: body.customer_name || body.caller_name || null,
-      customer_phone: body.customer_phone || body.from_number || null,
-      service_name: body.service_name || body.service_booked || null,
-    };
-
-    if (!dataToInsert.tenant_id) {
-      return NextResponse.json({ error: 'tenant_id required' }, { status: 400 });
+    const insertData = {
+      tenant_id: finalTenantId,
+      caller_name: data.caller_name || 'Cliente',
+      from_number: data.from_number || 'Sconosciuto',
+      service_booked: data.service_booked || 'Appuntamento',
+      booking_time: data.booking_time? new Date(data.booking_time).toISOString() : new Date().toISOString(),
+      status: 'confirmed'
     }
 
-    const { data, error } = await supabase
-      .from('calls')
-      .insert(dataToInsert)
-      .select()
-      .single();
+    console.log("INSERTING:", insertData)
+
+    const { data: result, error } = await supabaseAdmin.from('calls').insert([insertData]).select()
 
     if (error) {
-      console.error('Supabase insert error', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error("SUPABASE ERROR:", error)
+      return Response.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, data });
-  } catch (err) {
-    console.error('BOOK API ERROR', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return Response.json({ success: true, data: result })
+
+  } catch (e: any) {
+    console.error("ROUTE CRASH:", e)
+    return Response.json({ error: e.message }, { status: 500 })
   }
 }
