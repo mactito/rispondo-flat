@@ -100,12 +100,18 @@ export default function CallsPage() {
           color: '#22c55e', 
           padding: 12, 
           borderRadius: 12, 
-          wordBreak: 'break-all' 
+          wordBreak: 'break-all',
+          lineHeight: '18px'
         }}>
           <div>TENANT_ID: {tenant.id}</div>
+          <div>VAPI Assistant: {tenant.vapi_assistant_id || 'Creazione in corso...'}</div>
           <div style={{ marginTop: 8, color: 'white' }}>
-            VAPI SERVER URL:<br/>
+            Server URL per Vapi:<br/>
             https://rispondo-flat-g7ns.vercel.app/api/book?tenant_id={tenant.id}
+          </div>
+          <div style={{ marginTop: 8, color: '#94a3b8' }}>
+            Check URL per Vapi:<br/>
+            https://rispondo-flat-g7ns.vercel.app/api/check-availability?tenant_id={tenant.id}
           </div>
         </div>
 
