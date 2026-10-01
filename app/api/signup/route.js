@@ -17,27 +17,17 @@ function buildPrompt(tenant) {
 export async function POST(req) {
   try {
     const body = await req.json();
-    console.log('Signup body received:', body);
-    
-    // Accept both camelCase and snake_case
+    // Accept BOTH flows
     const email = body.email?.trim();
-    const password = body.password;
-    const business_name = body.business_name || body.businessName || body.business || body.name;
-    const city = body.city || body.citta || 'Comacchio';
+    const userId = body.userId || body.user_id;
+    const business_name = body.name || body.business_name || body.businessName;
+    const city = body.city || 'Comacchio';
 
-    if (!email || !password || !business_name) {
-      console.log('Missing:', { email: !!email, password: !!password, business_name: !!business_name, body });
-      return Response.json({ error: `Manca dati - email:${!!email} pass:${!!password} business:${!!business_name}` }, { status: 400 });
+    if (!email || !business_name || !userId) {
+      return Response.json({ error: `Manca dati - email:${!!email} business:${!!business_name} userId:${!!userId}` }, { status: 400 });
     }
 
-    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true });
-    let userId = userData?.user?.id;
-    if (userError && userError.message.includes('already exists')) {
-      const { data: existing } = await supabaseAdmin.auth.admin.listUsers();
-      const found = existing.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (found) userId = found.id; else throw userError;
-    } else if (userError) throw userError;
-
+    // Create tenant
     const { data: tenant, error: tenantError } = await supabaseAdmin.from('tenants').insert({
       business_name, city, category: 'salon', owner_email: email, owner_phone: '0000000000',
       services: [{ name: 'Taglio', duration: 30 }, { name: 'Piega', duration: 45 }, { name: 'Colore', duration: 90 }],
@@ -52,10 +42,18 @@ export async function POST(req) {
       },
       onboarding_completed: false
     }).select().single();
+    
     if (tenantError) throw tenantError;
 
-    await supabaseAdmin.from('profiles').upsert({ id: userId, tenant_id: tenant.id, email, is_paid: true });
+    // Create profile link
+    await supabaseAdmin.from('profiles').upsert({ 
+      id: userId, 
+      tenant_id: tenant.id, 
+      email, 
+      is_paid: true 
+    });
 
+    // Create Vapi assistant
     if (process.env.VAPI_API_KEY) {
       try {
         const prompt = buildPrompt(tenant);
@@ -75,13 +73,15 @@ export async function POST(req) {
           })
         });
         const vapiData = await vapiRes.json();
-        if (vapiData?.id) await supabaseAdmin.from('tenants').update({ vapi_assistant_id: vapiData.id }).eq('id', tenant.id);
+        if (vapiData?.id) {
+          await supabaseAdmin.from('tenants').update({ vapi_assistant_id: vapiData.id }).eq('id', tenant.id);
+        }
       } catch (e) { console.log('Vapi skip', e.message); }
     }
 
     return Response.json({ success: true, tenant_id: tenant.id });
   } catch (err) {
-    console.error('Signup error:', err);
+    console.error(err);
     return Response.json({ error: err.message }, { status: 500 });
   }
 }
