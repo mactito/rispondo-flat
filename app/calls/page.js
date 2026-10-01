@@ -18,14 +18,12 @@ export default function CallsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { window.location.href = "/signup"; return; }
 
-      // Get profile
       let { data: profile } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single();
 
-      // AUTO-REPAIR: if profile missing, find latest tenant and link it
       if (!profile) {
         const { data: latestTenant } = await supabase
           .from('tenants')
@@ -50,7 +48,6 @@ export default function CallsPage() {
         return; 
       }
 
-      // Get tenant using your actual columns
       const { data: tenantData } = await supabase
         .from('tenants')
         .select('*')
@@ -59,7 +56,6 @@ export default function CallsPage() {
       
       setTenant(tenantData);
 
-      // Get calls for this tenant
       const { data: callsData } = await supabase
         .from('calls')
         .select('*')
@@ -80,6 +76,8 @@ export default function CallsPage() {
     return <div style={{ padding: 32 }}>Nessun negozio trovato. Vai su /signup</div>;
   }
 
+  const isConnected = !!tenant.google_refresh_token;
+
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', padding: 24, fontFamily: 'system-ui' }}>
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -88,7 +86,7 @@ export default function CallsPage() {
           {tenant.business_name} - Dashboard
         </h1>
         <p style={{ color: '#64748b', marginTop: 4 }}>
-          {tenant.city || 'Comacchio'} • {tenant.category || 'salone'}
+          {tenant.city || 'Comacchio'} • {tenant.category || 'salone'} • {tenant.owner_email}
         </p>
 
         {/* VAPI URL BOX */}
@@ -113,6 +111,31 @@ export default function CallsPage() {
             Check URL per Vapi:<br/>
             https://rispondo-flat-g7ns.vercel.app/api/check-availability?tenant_id={tenant.id}
           </div>
+        </div>
+
+        {/* GOOGLE CONNECT BUTTON */}
+        <div style={{ marginTop: 16 }}>
+          {isConnected ? (
+            <div style={{ background: '#dcfce7', border: '1px solid #86efac', color: '#166534', padding: '12px 16px', borderRadius: 12, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>✅</span> Google Calendar collegato: {tenant.calendar_id}
+            </div>
+          ) : (
+            <a
+              href={`/api/auth/google?tenant_id=${tenant.id}`}
+              style={{
+                display: 'inline-block',
+                background: '#4285F4',
+                color: 'white',
+                padding: '12px 20px',
+                borderRadius: 12,
+                fontWeight: 800,
+                textDecoration: 'none',
+                fontSize: 14
+              }}
+            >
+              🔗 Collega Google Calendar - Collega il tuo calendario
+            </a>
+          )}
         </div>
 
         {/* BOOKINGS TABLE */}
@@ -153,13 +176,7 @@ export default function CallsPage() {
                       {c.booking_time ? new Date(c.booking_time).toLocaleString('it-IT') : '-'}
                     </td>
                     <td style={{ padding: 12 }}>
-                      <span style={{ 
-                        background: '#dcfce7', 
-                        color: '#166534', 
-                        padding: '4px 8px', 
-                        borderRadius: 6, 
-                        fontSize: 12 
-                      }}>
+                      <span style={{ background: '#dcfce7', color: '#166534', padding: '4px 8px', borderRadius: 6, fontSize: 12 }}>
                         {c.status || 'confirmed'}
                       </span>
                     </td>
