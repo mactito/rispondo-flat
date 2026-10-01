@@ -1,98 +1,119 @@
-export const dynamic = 'force-dynamic'
-import { createClient } from '@supabase/supabase-js'
+export const dynamic = 'force-dynamic';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 export async function POST(req) {
   try {
-    const { userId, email, name } = await req.json()
-    
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    )
+    const body = await req.json();
+    const { email, password, business_name, city } = body;
 
-    // 1. Create tenant
+    if (!email || !password || !business_name) {
+      return Response.json({ error: 'Manca email, password o nome negozio' }, { status: 400 });
+    }
+
+    // 1. Create auth user
+    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true
+    });
+
+    // If user already exists, get it
+    let userId = userData?.user?.id;
+    if (userError && userError.message.includes('already exists')) {
+      const { data: existing } = await supabaseAdmin.auth.admin.listUsers();
+      const found = existing.users.find(u => u.email === email);
+      if (found) userId = found.id;
+      else throw userError;
+    } else if (userError) {
+      throw userError;
+    }
+
+    // 2. Create tenant
     const { data: tenant, error: tenantError } = await supabaseAdmin
       .from('tenants')
       .insert({
-        business_name: name,
+        business_name: business_name,
+        city: city || 'Comacchio',
         category: 'salon',
         owner_email: email,
+        owner_phone: '0000000000',
+        services: [
+          { name: 'Taglio', duration: 30 },
+          { name: 'Piega', duration: 45 },
+          { name: 'Colore', duration: 90 }
+        ],
+        opening_hours: {
+          lun: { open: '09:00', close: '19:00', closed: false },
+          mar: { open: '09:00', close: '19:00', closed: false },
+          mer: { open: '09:00', close: '19:00', closed: false },
+          gio: { open: '09:00', close: '19:00', closed: false },
+          ven: { open: '09:00', close: '19:00', closed: false },
+          sab: { open: '09:00', close: '18:00', closed: false },
+          dom: { open: '09:00', close: '13:00', closed: true }
+        },
         onboarding_completed: false
       })
       .select()
-      .single()
+      .single();
 
-    if (tenantError) throw tenantError
+    if (tenantError) throw tenantError;
 
-    // 2. Link user to tenant
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .insert({
-        id: userId,
-        tenant_id: tenant.id,
-        email: email
-      })
-    
-    if (profileError) throw profileError
+    // 3. Create / update profile linking user to tenant
+    await supabaseAdmin.from('profiles').upsert({
+      id: userId,
+      tenant_id: tenant.id,
+      email: email,
+      is_paid: true
+    });
 
-    // 3. AUTO-CREATE VAPI ASSISTANT FOR THIS TENANT
-    let vapiAssistantId = null
-    try {
-      const vapiRes = await fetch('https://api.vapi.ai/assistant', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.VAPI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: `${name} - AI Receptionist`,
-          voice: { provider: "11labs", voiceId: "21m00Tcm4TlvDq8ikWAM" },
-          model: {
-            provider: "openai",
-            model: "gpt-4o-mini",
-            messages: [
-              { role: "system", content: `Sei la receptionist di ${name}, un salone a Comacchio. Rispondi sempre in italiano. Il tuo compito è prenotare appuntamenti. Chiedi: nome, servizio, giorno e ora. Sii gentile e breve.` }
-            ],
-            tools: [
-              {
-                type: "function",
-                function: {
-                  name: "check_availability",
-                  description: "Controlla disponibilità",
-                  parameters: { type: "object", properties: { date: { type: "string" }, time: { type: "string" } } }
-                },
-                server: { url: `https://rispondo-flat-g7ns.vercel.app/api/check-availability?tenant_id=${tenant.id}` }
-              },
-              {
-                type: "function",
-                function: {
-                  name: "book_appointment",
-                  description: "Prenota appuntamento",
-                  parameters: { type: "object", properties: { caller_name: { type: "string" }, service_booked: { type: "string" }, booking_time: { type: "string" }, from_number: { type: "string" } }, required: ["caller_name","service_booked","booking_time"] }
-                },
-                server: { url: `https://rispondo-flat-g7ns.vercel.app/api/book?tenant_id=${tenant.id}` }
-              }
-            ]
+    // 4. Optional: Auto-create Vapi assistant if key exists
+    if (process.env.VAPI_API_KEY && tenant) {
+      try {
+        const vapiRes = await fetch('https://api.vapi.ai/assistant', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.VAPI_API_KEY}`,
+            'Content-Type': 'application/json'
           },
-          firstMessage: `Ciao! Qui ${name}, come posso aiutarti a prenotare?`
-        })
-      })
-      
-      const vapiData = await vapiRes.json()
-      if (vapiData.id) {
-        vapiAssistantId = vapiData.id
-        // Save to tenant
-        await supabaseAdmin.from('tenants').update({ vapi_assistant_id: vapiAssistantId }).eq('id', tenant.id)
+          body: JSON.stringify({
+            name: `${business_name} - Receptionist`,
+            model: {
+              provider: 'openai',
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: `Sei la receptionist di ${business_name} a ${city || 'Comacchio'}. Parli italiano, sei gentile e professionale. Il tuo compito è prenotare appuntamenti. Chiedi sempre nome, servizio e data/ora. Usa check-availability prima di confermare.`
+                }
+              ]
+            },
+            voice: { provider: '11labs', voiceId: '21m00Tcm4TlvDq8ikWAM' },
+            serverUrl: `${process.env.NEXT_PUBLIC_BASE_URL}/api/book?tenant_id=${tenant.id}`,
+          })
+        });
+        const vapiData = await vapiRes.json();
+        if (vapiData?.id) {
+          await supabaseAdmin.from('tenants').update({ vapi_assistant_id: vapiData.id }).eq('id', tenant.id);
+        }
+      } catch (e) {
+        console.log('Vapi auto-create skipped:', e.message);
       }
-    } catch (e) {
-      console.log("Vapi create failed (non-blocking):", e.message)
-      // Don't fail signup if Vapi fails - we can create assistant later manually
     }
 
-    return Response.json({ success: true, tenant_id: tenant.id, vapi_assistant_id: vapiAssistantId })
+    return Response.json({ 
+      success: true, 
+      user_id: userId,
+      tenant_id: tenant.id,
+      redirect: '/onboarding'
+    });
 
   } catch (err) {
-    console.error(err)
-    return Response.json({ error: err.message }, { status: 500 })
+    console.error('Signup error:', err);
+    return Response.json({ error: err.message }, { status: 500 });
   }
 }
