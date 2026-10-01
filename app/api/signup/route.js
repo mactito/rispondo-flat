@@ -1,56 +1,11 @@
 export const dynamic = 'force-dynamic';
 import { createClient } from '@supabase/supabase-js';
+import { buildVapiPrompt } from '../../../lib/vapiPrompt';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-function buildVapiPrompt(tenant) {
-  const services = tenant.services || [];
-  const hours = tenant.opening_hours || {};
-  
-  const servicesText = services.map(s => `- ${s.name} (${s.duration} minuti)`).join('\n');
-  
-  const hoursText = Object.entries(hours).map(([day, h]) => {
-    if (h.closed) return `- ${day.toUpperCase()}: CHIUSO`;
-    return `- ${day.toUpperCase()}: ${h.open} - ${h.close}`;
-  }).join('\n');
-
-  return `
-Sei la receptionist AI di "${tenant.business_name}" a ${tenant.city || 'Comacchio'}.
-
-PERSONALITÀ:
-- Parli italiano, cordiale, professionale, veloce. 1-2 frasi max.
-- Non inventi mai orari o servizi.
-
-NEGOZIO:
-Nome: ${tenant.business_name}
-Città: ${tenant.city}
-Telefono: ${tenant.owner_phone || 'non specificato'}
-
-SERVIZI (solo questi):
-${servicesText}
-
-ORARI:
-${hoursText}
-
-FLUSSO OBBLIGATORIO:
-1. Chiedi: nome, servizio, giorno e ora.
-2. Chiama SEMPRE check-availability con date e time.
-3. LEGGI RISPOSTA:
-   - Se "è libero": conferma "Perfetto alle XX è libero, confermo?"
-   - Se "non disponibile + propone orari": leggi ESATTAMENTE gli orari al cliente: "Alle 10 occupato, ma oggi ho 10:30, 11:00, 15:00. Ti va bene uno di questi? Altrimenti vuoi altro giorno?"
-   - Se cliente dice NO a orari oggi: chiedi "Vuoi provare un altro giorno? Quale giorno preferisci?" e richiama check-availability con nuova data.
-   - Se CHIUSO: "Quel giorno siamo chiusi, vuoi provare altro giorno?"
-4. Solo quando cliente dice SI ad orario specifico, chiama book con caller_name, service_booked, booking_time (ISO YYYY-MM-DDTHH:mm:ss), from_number.
-
-NON FARE:
-- Non inventare prezzi: di "i prezzi variano, in salone ti dicono tutto"
-- Non prenotare fuori orario o giorno chiuso
-- Usa SOLO orari che ti da check-availability
-`.trim();
-}
 
 export async function POST(req) {
   try {
@@ -78,22 +33,7 @@ export async function POST(req) {
       throw userError;
     }
 
-    // 2. Create tenant with default services & hours
-    const defaultServices = [
-      { name: 'Taglio', duration: 30 },
-      { name: 'Piega', duration: 45 },
-      { name: 'Colore', duration: 90 }
-    ];
-    const defaultHours = {
-      lun: { open: '09:00', close: '19:00', closed: false },
-      mar: { open: '09:00', close: '19:00', closed: false },
-      mer: { open: '09:00', close: '19:00', closed: false },
-      gio: { open: '09:00', close: '19:00', closed: false },
-      ven: { open: '09:00', close: '19:00', closed: false },
-      sab: { open: '09:00', close: '18:00', closed: false },
-      dom: { open: '09:00', close: '13:00', closed: true }
-    };
-
+    // 2. Create tenant with defaults
     const { data: tenant, error: tenantError } = await supabaseAdmin
       .from('tenants')
       .insert({
@@ -102,8 +42,20 @@ export async function POST(req) {
         category: 'salon',
         owner_email: email,
         owner_phone: '0000000000',
-        services: defaultServices,
-        opening_hours: defaultHours,
+        services: [
+          { name: 'Taglio', duration: 30 },
+          { name: 'Piega', duration: 45 },
+          { name: 'Colore', duration: 90 }
+        ],
+        opening_hours: {
+          lun: { open: '09:00', close: '19:00', closed: false },
+          mar: { open: '09:00', close: '19:00', closed: false },
+          mer: { open: '09:00', close: '19:00', closed: false },
+          gio: { open: '09:00', close: '19:00', closed: false },
+          ven: { open: '09:00', close: '19:00', closed: false },
+          sab: { open: '09:00', close: '18:00', closed: false },
+          dom: { open: '09:00', close: '13:00', closed: true }
+        },
         onboarding_completed: false
       })
       .select()
@@ -119,7 +71,7 @@ export async function POST(req) {
       is_paid: true
     });
 
-    // 4. Auto-create Vapi assistant with SMART prompt
+    // 4. Auto-create Vapi assistant with SMART prompt (services + hours + alternative slots logic)
     if (process.env.VAPI_API_KEY) {
       try {
         const prompt = buildVapiPrompt(tenant);
@@ -148,7 +100,7 @@ export async function POST(req) {
                   type: 'object',
                   properties: {
                     date: { type: 'string', description: 'YYYY-MM-DD' },
-                    time: { type: 'string', description: 'HH:mm o ISO' },
+                    time: { type: 'string', description: 'HH:mm' },
                     datetime: { type: 'string', description: 'ISO completo' }
                   }
                 }
