@@ -32,8 +32,8 @@ export default function OnboardingPage() {
       if (!profile?.tenant_id) { setLoading(false); return; }
 
       const { data: t } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single();
+      if (!t) { setLoading(false); return; }
 
-      // Ensure defaults if null
       if (!t.services) t.services = [{ name: 'Taglio', duration: 30 }, { name: 'Piega', duration: 45 }];
       if (!t.opening_hours) t.opening_hours = {
         lun: { open: '09:00', close: '19:00', closed: false },
@@ -44,6 +44,9 @@ export default function OnboardingPage() {
         sab: { open: '09:00', close: '18:00', closed: false },
         dom: { open: '09:00', close: '13:00', closed: true }
       };
+      // Fix old invalid category on load
+      const allowed = ['salone','ristorante','officina','dentista','palestra','altro'];
+      if (!allowed.includes(t.category)) t.category = 'salone';
 
       setTenant(t);
       setLoading(false);
@@ -78,7 +81,7 @@ export default function OnboardingPage() {
     const { error } = await supabase.from('tenants').update({
       business_name: tenant.business_name,
       city: tenant.city,
-      category: tenant.category,
+      category: tenant.category, // now always valid
       owner_phone: tenant.owner_phone,
       services: tenant.services,
       opening_hours: tenant.opening_hours,
@@ -92,16 +95,13 @@ export default function OnboardingPage() {
       return;
     }
 
-    // Sync Vapi prompt with new services/hours
     try {
       await fetch('/api/sync-vapi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenant_id: tenant.id })
       });
-    } catch(e) {
-      console.log('Sync skipped', e.message);
-    }
+    } catch(e) {}
 
     window.location.href = '/calls?onboarded=1';
   };
@@ -112,9 +112,8 @@ export default function OnboardingPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', padding: 24, fontFamily: 'system-ui' }}>
       <div style={{ maxWidth: 700, margin: '0 auto', background: 'white', border: '1px solid #e2e8f0', borderRadius: 16, padding: 24 }}>
-
         <h1 style={{ fontSize: 26, fontWeight: 900, margin: 0 }}>Configura il tuo negozio</h1>
-        <p style={{ color: '#64748b', marginTop: 6 }}>Queste info verranno usate dalla tua AI al telefono per proporre orari alternativi</p>
+        <p style={{ color: '#64748b', marginTop: 6 }}>Queste info verranno usate dalla tua AI al telefono</p>
 
         <div style={{ marginTop: 24 }}>
           <label style={{ fontWeight: 700, fontSize: 13 }}>Nome negozio</label>
@@ -134,12 +133,13 @@ export default function OnboardingPage() {
 
         <div style={{ marginTop: 12 }}>
           <label style={{ fontWeight: 700, fontSize: 13 }}>Categoria</label>
-          <select value={tenant.category||'salon'} onChange={e=>updateField('category', e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <option value="salon">Parrucchiere / Salone</option>
-            <option value="barber">Barbiere</option>
-            <option value="beauty">Centro Estetico</option>
-            <option value="clinic">Studio / Clinica</option>
-            <option value="restaurant">Ristorante</option>
+          <select value={tenant.category||'salone'} onChange={e=>updateField('category', e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }}>
+            <option value="salone">Parrucchiere / Salone</option>
+            <option value="ristorante">Ristorante</option>
+            <option value="officina">Officina / Servizi</option>
+            <option value="dentista">Dentista / Studio</option>
+            <option value="palestra">Palestra</option>
+            <option value="altro">Altro</option>
           </select>
         </div>
 
@@ -182,7 +182,6 @@ export default function OnboardingPage() {
         <button onClick={save} disabled={saving} style={{ marginTop: 28, width: '100%', background: 'black', color: 'white', padding: 14, borderRadius: 12, fontWeight: 800, fontSize: 15, cursor: 'pointer', opacity: saving?0.6:1 }}>
           {saving? 'Salvo e aggiorno AI...' : 'Salva e vai al Dashboard →'}
         </button>
-
       </div>
     </div>
   );
