@@ -44,7 +44,6 @@ export default function OnboardingPage() {
         sab: { open: '09:00', close: '18:00', closed: false },
         dom: { open: '09:00', close: '13:00', closed: true }
       };
-      // Fix old invalid category on load
       const allowed = ['salone','ristorante','officina','dentista','palestra','altro'];
       if (!allowed.includes(t.category)) t.category = 'salone';
 
@@ -55,21 +54,17 @@ export default function OnboardingPage() {
   }, []);
 
   const updateField = (field, value) => setTenant(prev => ({...prev, [field]: value }));
-
   const updateService = (idx, field, value) => {
     const newServices = [...tenant.services];
     newServices[idx][field] = value;
     updateField('services', newServices);
   };
-
   const addService = () => {
     updateField('services', [...(tenant.services||[]), { name: 'Nuovo servizio', duration: 30 }]);
   };
-
   const removeService = (idx) => {
     updateField('services', tenant.services.filter((_, i) => i!== idx));
   };
-
   const updateHours = (dayKey, field, value) => {
     const newHours = {...tenant.opening_hours };
     newHours[dayKey] = {...newHours[dayKey], [field]: value };
@@ -77,12 +72,14 @@ export default function OnboardingPage() {
   };
 
   const save = async () => {
+    if(!tenant.owner_phone){ alert("Inserisci telefono negozio!"); return; }
     setSaving(true);
     const { error } = await supabase.from('tenants').update({
       business_name: tenant.business_name,
       city: tenant.city,
-      category: tenant.category, // now always valid
+      category: tenant.category,
       owner_phone: tenant.owner_phone,
+      phone: tenant.owner_phone, // <- IMPORTANT: save both columns
       services: tenant.services,
       opening_hours: tenant.opening_hours,
       description: tenant.description,
@@ -126,8 +123,8 @@ export default function OnboardingPage() {
             <input value={tenant.city||''} onChange={e=>updateField('city', e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }} />
           </div>
           <div>
-            <label style={{ fontWeight: 700, fontSize: 13 }}>Telefono</label>
-            <input value={tenant.owner_phone||''} onChange={e=>updateField('owner_phone', e.target.value)} placeholder="333..." style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }} />
+            <label style={{ fontWeight: 700, fontSize: 13 }}>Telefono negozio (su Google) *</label>
+            <input value={tenant.owner_phone||''} onChange={e=>updateField('owner_phone', e.target.value)} placeholder="+39 333..." style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #000', fontWeight: 700 }} />
           </div>
         </div>
 
@@ -182,6 +179,24 @@ export default function OnboardingPage() {
         <button onClick={save} disabled={saving} style={{ marginTop: 28, width: '100%', background: 'black', color: 'white', padding: 14, borderRadius: 12, fontWeight: 800, fontSize: 15, cursor: 'pointer', opacity: saving?0.6:1 }}>
           {saving? 'Salvo e aggiorno AI...' : 'Salva e vai al Dashboard →'}
         </button>
+
+        {/* ==== NEW: CONDITIONAL FORWARDING BOX ==== */}
+        <div style={{marginTop:32,border:'1px solid #bbf7d0',borderRadius:12,padding:16,background:'#f0fdf4'}}>
+          <h3 style={{margin:0,fontSize:15,fontWeight:800}}>📞 Vuoi che AI risponda dopo 15 sec?</h3>
+          <p style={{fontSize:12,color:'#475569',marginTop:4}}>Attiva inoltro condizionale - tu rispondi prima, se sei occupato AI prenota</p>
+          <div style={{marginTop:12,background:'black',color:'white',padding:12,borderRadius:8,fontFamily:'monospace',fontSize:13}}>
+            <div>Componi sul telefono del negozio e premi CHIAMA:</div>
+            <div style={{marginTop:8,fontSize:16,fontWeight:900,letterSpacing:0.5}}>**61*+1NUMEROVAPI*11*15#</div>
+            <div style={{marginTop:8,fontSize:11,opacity:0.7}}>Es: **61*+14151234567*11*15# - prendi numero in VAPI Dashboard → Phone Numbers</div>
+          </div>
+          <div style={{marginTop:10,fontSize:12,display:'grid',gap:4}}>
+            <div>✅ Se rispondi entro 15 sec → parli tu, AI non entra</div>
+            <div>🤖 Se non rispondi → chiamata va ad AI che prenota automatico</div>
+            <div>🔧 Per disattivare inoltro: componi ##61# e chiama</div>
+            <div>🔧 Per stato: *#61#</div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
