@@ -22,34 +22,27 @@ export default function CallsPage() {
   async function init() {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    console.log("USER:", user);
     if (!user) {
       router.push('/login');
       return;
     }
 
-    // Try get tenant
-    let { data: tenantData, error: fetchError } = await supabase
+    let { data: tenantData } = await supabase
      .from('tenants')
      .select('*')
      .eq('owner_id', user.id)
      .maybeSingle();
 
-    console.log("TENANT FETCH:", tenantData, fetchError);
-
-    // If not exists, create directly
     if (!tenantData) {
-      console.log("Creating tenant for", user.id);
-      const { data: newTenant, error: insertError } = await supabase
+      const { data: newTenant, error } = await supabase
        .from('tenants')
-       .insert({ owner_id: user.id, name: user.email.split('@')[0] })
+       .insert({ owner_id: user.id })
        .select()
        .single();
 
-      console.log("INSERT RESULT:", newTenant, insertError);
-
-      if (insertError) {
-        alert("Errore creazione tenant: " + insertError.message + " - Esegui in Supabase SQL: ALTER TABLE tenants DISABLE ROW LEVEL SECURITY;");
+      if (error) {
+        alert("Errore: " + error.message);
+        console.error(error);
         setLoading(false);
         return;
       }
@@ -74,7 +67,6 @@ export default function CallsPage() {
   }
 
   async function handleDisconnect() {
-    if (!confirm('Disconnettere Google Calendar?')) return;
     await supabase.from('tenants').update({ google_refresh_token: null, calendar_id: null }).eq('id', tenant.id);
     window.location.reload();
   }
@@ -84,15 +76,15 @@ export default function CallsPage() {
     router.push('/login');
   }
 
-  if (loading) return <div style={{ padding: 40 }}>Caricamento... Controlla F12 Console</div>;
-  if (!tenant) return <div style={{ padding: 40 }}>Errore tenant - apri F12 Console e mandami screenshot</div>;
+  if (loading) return <div style={{ padding: 40 }}>Caricamento...</div>;
+  if (!tenant) return <div style={{ padding: 40 }}>Errore tenant</div>;
 
   return (
     <div style={{ padding: '30px', maxWidth: '1100px', margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
         <div>
           <h1 style={{ fontSize: '28px', fontWeight: '700' }}>Chiamate</h1>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>{tenant?.name} • {tenant?.id.slice(0,8)}</p>
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>{tenant.id.slice(0,8)} • Dashboard attiva ✅</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           {tenant?.google_refresh_token? (
