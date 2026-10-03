@@ -33,26 +33,30 @@ export default function CallsPage() {
       return;
     }
 
-    const { data: tenantData, error } = await supabase
+    let { data: tenantData } = await supabase
      .from('tenants')
      .select('*')
      .eq('owner_id', user.id)
      .single();
 
-    if (error ||!tenantData) {
-      console.error('Tenant error', error);
-      // If no tenant, create one automatically
-      const { data: newTenant, error: insertError } = await supabase
-       .from('tenants')
-       .insert({ owner_id: user.id, name: user.email.split('@')[0] })
-       .select()
-       .single();
-
-      if (!insertError && newTenant) {
-        setTenant(newTenant);
-      } else {
-        console.error(insertError);
+    // If no tenant, create automatically via API (bypasses RLS, no manual ID needed)
+    if (!tenantData) {
+      try {
+        const res = await fetch('/api/ensure-tenant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id, email: user.email })
+        });
+        const newTenant = await res.json();
+        if (!newTenant.error && newTenant.id) {
+          tenantData = newTenant;
+        }
+      } catch (e) {
+        console.error('ensure-tenant failed', e);
       }
+    }
+
+    if (!tenantData) {
       setLoading(false);
       return;
     }
@@ -92,14 +96,14 @@ export default function CallsPage() {
 
   if (loading) return <div style={{ padding: 40 }}>Caricamento...</div>;
 
-  if (!tenant) return <div style={{ padding: 40 }}>Creazione account in corso... ricarica la pagina.</div>;
+  if (!tenant) return <div style={{ padding: 40 }}>Creazione account... se resta bloccato ricarica dopo 5 sec.</div>;
 
   return (
     <div style={{ padding: '30px', maxWidth: '1100px', margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', flexWrap: 'wrap', gap: '15px' }}>
         <div>
           <h1 style={{ fontSize: '28px', fontWeight: '700' }}>Chiamate</h1>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>{tenant?.name} • {tenant?.id.slice(0,8)}... • {tenant?.owner_id?.slice(0,8)}...</p>
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>{tenant?.name} • {tenant?.id.slice(0,8)}... </p>
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
