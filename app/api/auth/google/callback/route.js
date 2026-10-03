@@ -8,7 +8,14 @@ export async function GET(req) {
 
   if (!code ||!tenant_id) return Response.json({ error: 'Missing code or tenant' }, { status: 400 });
 
-  // Exchange code for tokens
+  // FIX: never let it become undefined
+  const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_VERCEL_URL || 'https://rispondo-flat-g7ns.vercel.app').replace(/\/$/, '');
+  // If VERCEL_URL has no https, add it
+  const cleanBaseUrl = baseUrl.startsWith('http')? baseUrl : `https://${baseUrl}`;
+  const redirectUri = `${cleanBaseUrl}/api/auth/google/callback`;
+
+  console.log("Using redirectUri:", redirectUri);
+
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -16,19 +23,23 @@ export async function GET(req) {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/auth/google/callback`,
+      redirect_uri: redirectUri,
       grant_type: 'authorization_code'
     })
   });
 
   const tokens = await tokenRes.json();
 
+  if (tokens.error) {
+    console.error("Token error:", tokens);
+    return Response.json({ error: tokens.error_description || tokens.error, details: tokens, used_redirect_uri: redirectUri }, { status: 400 });
+  }
+
   if (!tokens.refresh_token) {
-    // Google only gives refresh_token first time - if missing, tell user to revoke access and retry
     return new Response(`
       <html><body style="font-family: system-ui; padding: 40px;">
       <h2>Devi revocare l'accesso prima</h2>
-      <p>Vai su <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> rimuovi Rispondo e riprova.</p>
+      <p>Google da refresh_token solo la prima volta. Vai su <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> rimuovi Rispondo e riprova.</p>
       <a href="/calls">Torna al dashboard</a>
       </body></html>`, { headers: { 'Content-Type': 'text/html' } });
   }
@@ -38,19 +49,17 @@ export async function GET(req) {
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 
-  // Get primary calendar id
   const calRes = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
     headers: { Authorization: `Bearer ${tokens.access_token}` }
   });
   const calData = await calRes.json();
   const primaryCalendar = calData.items?.find(c => c.primary) || calData.items?.[0];
 
-  // Save to tenant
   await supabaseAdmin.from('tenants').update({
     google_refresh_token: tokens.refresh_token,
     calendar_id: primaryCalendar?.id || 'primary',
     onboarding_completed: true
   }).eq('id', tenant_id);
 
-  return Response.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/calls?connected=1`);
+  return Response.redirect(`${cleanBaseUrl}/calls?connected=1`);
 }
