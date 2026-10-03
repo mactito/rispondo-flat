@@ -49,7 +49,7 @@ export default function Signup() {
 
       // 4. SUCCESS - redirect
       console.log("SUCCESS, redirecting to /calls");
-      window.location.href="/calls";
+      window.location.href="/onboarding";
       
     } catch(err) {
       console.error(err);
