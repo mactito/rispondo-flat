@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 const DAYS = [
@@ -22,18 +22,16 @@ export default function OnboardingPage() {
   const [tenant, setTenant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [extraInfo, setExtraInfo] = useState("");
 
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { window.location.href = "/signup"; return; }
-
       const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).single();
       if (!profile?.tenant_id) { setLoading(false); return; }
-
       const { data: t } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single();
       if (!t) { setLoading(false); return; }
-
       if (!t.services) t.services = [{ name: 'Taglio', duration: 30 }, { name: 'Piega', duration: 45 }];
       if (!t.opening_hours) t.opening_hours = {
         lun: { open: '09:00', close: '19:00', closed: false },
@@ -46,8 +44,9 @@ export default function OnboardingPage() {
       };
       const allowed = ['salone','ristorante','officina','dentista','palestra','altro'];
       if (!allowed.includes(t.category)) t.category = 'salone';
-
       setTenant(t);
+      const { data: know } = await supabase.from('tenant_knowledge').select('info').eq('tenant_id', t.id).maybeSingle();
+      if (know?.info) setExtraInfo(know.info);
       setLoading(false);
     }
     load();
@@ -59,12 +58,8 @@ export default function OnboardingPage() {
     newServices[idx][field] = value;
     updateField('services', newServices);
   };
-  const addService = () => {
-    updateField('services', [...(tenant.services||[]), { name: 'Nuovo servizio', duration: 30 }]);
-  };
-  const removeService = (idx) => {
-    updateField('services', tenant.services.filter((_, i) => i!== idx));
-  };
+  const addService = () => updateField('services', [...(tenant.services||[]), { name: 'Nuovo servizio', duration: 30 }]);
+  const removeService = (idx) => updateField('services', tenant.services.filter((_, i) => i!== idx));
   const updateHours = (dayKey, field, value) => {
     const newHours = {...tenant.opening_hours };
     newHours[dayKey] = {...newHours[dayKey], [field]: value };
@@ -73,25 +68,26 @@ export default function OnboardingPage() {
 
   const save = async () => {
     if(!tenant.owner_phone){ alert("Inserisci telefono negozio!"); return; }
+    if(saving) return;
     setSaving(true);
     const { error } = await supabase.from('tenants').update({
       business_name: tenant.business_name,
       city: tenant.city,
       category: tenant.category,
       owner_phone: tenant.owner_phone,
-      phone: tenant.owner_phone, // <- IMPORTANT: save both columns
+      phone: tenant.owner_phone,
       services: tenant.services,
       opening_hours: tenant.opening_hours,
       description: tenant.description,
       onboarding_completed: true
     }).eq('id', tenant.id);
-
-    if (error) {
-      alert(error.message);
-      setSaving(false);
-      return;
+    if (error) { alert(error.message); setSaving(false); return; }
+    if (extraInfo) {
+      await supabase.from('tenant_knowledge').upsert({
+        tenant_id: tenant.id,
+        info: extraInfo
+      }, { onConflict: 'tenant_id' });
     }
-
     try {
       await fetch('/api/sync-vapi', {
         method: 'POST',
@@ -99,7 +95,6 @@ export default function OnboardingPage() {
         body: JSON.stringify({ tenant_id: tenant.id })
       });
     } catch(e) {}
-
     window.location.href = '/calls?onboarded=1';
   };
 
@@ -123,7 +118,7 @@ export default function OnboardingPage() {
             <input value={tenant.city||''} onChange={e=>updateField('city', e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }} />
           </div>
           <div>
-            <label style={{ fontWeight: 700, fontSize: 13 }}>Telefono negozio (su Google) *</label>
+            <label style={{ fontWeight: 700, fontSize: 13 }}>Telefono negozio *</label>
             <input value={tenant.owner_phone||''} onChange={e=>updateField('owner_phone', e.target.value)} placeholder="+39 333..." style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #000', fontWeight: 700 }} />
           </div>
         </div>
@@ -140,9 +135,16 @@ export default function OnboardingPage() {
           </select>
         </div>
 
+        <div style={{ marginTop: 16, border: '2px solid #facc15', background: '#fefce8', borderRadius: 12, padding: 16 }}>
+          <label style={{ fontWeight: 900, fontSize: 14 }}>🧠 Info extra sul tuo negozio - Rende l'AI 10x più intelligente</label>
+          <p style={{ fontSize: 11, color: '#854d0e', marginTop: 4 }}>Scrivi tutto: prezzi, dipendenti, regole. Es: "Taglio 25€, Colore 60€, Anna fa solo colore martedì/giovedì, Luca fa barba. Chiusi lunedì mattina. Parcheggio dietro. Solo contanti. Siamo in via Roma 12"</p>
+          <textarea value={extraInfo} onChange={e=>setExtraInfo(e.target.value)} placeholder="Es: Abbiamo 3 dipendenti: Anna fa colore, Luca fa barba e taglio uomo. Prezzo taglio 25€, balayage 120€. Chiusi lunedì. Parcheggio dietro negozio..." style={{ width: '100%', marginTop: 10, padding: 12, borderRadius: 10, border: '1px solid #eab308', minHeight: 110, fontSize: 13 }} />
+          <div style={{fontSize: 11, color: '#a16207', marginTop: 6}}>L'AI userà queste info per rispondere a "quanto costa?" "chi fa barba?" ecc.</div>
+        </div>
+
         <div style={{ marginTop: 12 }}>
-          <label style={{ fontWeight: 700, fontSize: 13 }}>Descrizione breve (per AI)</label>
-          <textarea value={tenant.description||''} onChange={e=>updateField('description', e.target.value)} placeholder="Es: Salone specializzato in balayage e tagli moderni" style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0', minHeight: 60 }} />
+          <label style={{ fontWeight: 700, fontSize: 13 }}>Descrizione breve</label>
+          <textarea value={tenant.description||''} onChange={e=>updateField('description', e.target.value)} placeholder="Es: Salone specializzato in balayage" style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0', minHeight: 60 }} />
         </div>
 
         <div style={{ marginTop: 28 }}>
@@ -180,20 +182,15 @@ export default function OnboardingPage() {
           {saving? 'Salvo e aggiorno AI...' : 'Salva e vai al Dashboard →'}
         </button>
 
-        {/* ==== NEW: CONDITIONAL FORWARDING BOX ==== */}
         <div style={{marginTop:32,border:'1px solid #bbf7d0',borderRadius:12,padding:16,background:'#f0fdf4'}}>
-          <h3 style={{margin:0,fontSize:15,fontWeight:800}}>📞 Vuoi che AI risponda dopo 15 sec?</h3>
-          <p style={{fontSize:12,color:'#475569',marginTop:4}}>Attiva inoltro condizionale - tu rispondi prima, se sei occupato AI prenota</p>
+          <h3 style={{margin:0,fontSize:15,fontWeight:800}}>📞 Inoltro dopo 15 sec?</h3>
           <div style={{marginTop:12,background:'black',color:'white',padding:12,borderRadius:8,fontFamily:'monospace',fontSize:13}}>
-            <div>Componi sul telefono del negozio e premi CHIAMA:</div>
-            <div style={{marginTop:8,fontSize:16,fontWeight:900,letterSpacing:0.5}}>**61*+1NUMEROVAPI*11*15#</div>
-            <div style={{marginTop:8,fontSize:11,opacity:0.7}}>Es: **61*+14151234567*11*15# - prendi numero in VAPI Dashboard → Phone Numbers</div>
+            <div>Componi: **61*+1NUMEROVAPI*11*15#</div>
           </div>
           <div style={{marginTop:10,fontSize:12,display:'grid',gap:4}}>
-            <div>✅ Se rispondi entro 15 sec → parli tu, AI non entra</div>
-            <div>🤖 Se non rispondi → chiamata va ad AI che prenota automatico</div>
-            <div>🔧 Per disattivare inoltro: componi ##61# e chiama</div>
-            <div>🔧 Per stato: *#61#</div>
+            <div>✅ Rispondi entro 15 sec → parli tu</div>
+            <div>🤖 Non rispondi → va ad AI</div>
+            <div>🔧 Disattiva: ##61#</div>
           </div>
         </div>
 
