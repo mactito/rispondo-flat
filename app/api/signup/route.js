@@ -35,6 +35,10 @@ export async function POST(req) {
 
     await supabaseAdmin.from('profiles').upsert({ id: userId, tenant_id: tenant.id, email }, { onConflict: 'id' });
 
+    // === NEW: FETCH EXTRA INFO ===
+    const { data: knowledge } = await supabaseAdmin.from('tenant_knowledge').select('info').eq('tenant_id', tenant.id).maybeSingle();
+    const { data: customerCount } = await supabaseAdmin.from('customers').select('phone',{count:'exact'}).eq('tenant_id', tenant.id);
+
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://rispondo-flat-g7ns.vercel.app';
     const vapiKey = process.env.VAPI_PRIVATE_KEY || process.env.VAPI_API_KEY;
     const serverUrl = `${siteUrl}/api/vapi/webhook`;
@@ -48,6 +52,12 @@ Oggi={{now}} Europe/Rome
 Servizi=${JSON.stringify(tenant.services)}
 Orari=${JSON.stringify(tenant.opening_hours)}
 
+INFO EXTRA NEGOZIO (USA QUESTO PER RISPONDERE):
+${knowledge?.info || 'Nessuna info extra ancora. Chiedi al titolare di aggiungerla in dashboard.'}
+${knowledge?.info? 'USA queste info per prezzi, dipendenti, parcheggio, regole. Se chiedono prezzo, rispondi da qui.' : ''}
+
+CLIENTI ESISTENTI: ${customerCount||0} clienti salvati. Se riconosci numero, saluta per nome.
+
 CONVERSIONE DATE OBBLIGATORIA:
 - domani=+1 giorno, dopodomani=+2, lunedi/martedi=prossima occorrenza
 - "alle 10"=10:00, "10 e mezza"=10:30, "15:30"=15:30
@@ -55,7 +65,7 @@ CONVERSIONE DATE OBBLIGATORIA:
 
 FLUSSO PERFETTO - NON SALTARE STEP:
 1. Cliente: "voglio prenotare" -> Tu: "Certo! Come ti chiami?"
-2. Cliente dice nome -> Se non capisci fai SPELLING: "Puoi fare lo spelling? M come Milano?"
+2. Cliente dice nome -> Se non capisci fai SPELLING: "Scusa non ho capito bene, puoi fare lo spelling? Es. M come Milano, A come Ancona, R come Roma..."
 3. Poi: "Che servizio vuoi? Taglio, piega, colore o barba?"
 4. Se senti "piaga/tagio/colre" correggi fuzzy a servizio corretto
 5. Poi: "Quando vuoi venire?"
@@ -139,7 +149,6 @@ REGOLE:
         },
         firstMessage: `Ciao, ${tenant.business_name}, come posso aiutarti?`,
         endCallMessage: "Perfetto, ti aspetto! Ciao!",
-        // TRAINING: non interrompere cliente
         silenceTimeoutSeconds: 3.5,
         responseDelaySeconds: 0.6,
         backgroundSound: "office",
