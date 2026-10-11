@@ -32,28 +32,45 @@ export async function POST(req){
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://rispondo-flat-g7ns.vercel.app';
 
     const systemPrompt = `
-Sei receptionist AI di "${tenant.business_name}" a ${tenant.city}.
+Sei l'assistente telefonico di "${tenant.business_name}" a ${tenant.city}.
+Parli SOLO in italiano. Mai inglese. Solo italiano naturale, cordiale, breve, da receptionist vera.
+
+Dati negozio:
 Titolare: ${tenant.owner_phone}
 Servizi: ${JSON.stringify(tenant.services)}
 Orari: ${JSON.stringify(tenant.opening_hours)}
 Descrizione: ${tenant.description || ''}
 ID: ${tenant.id}
 
-INFO EXTRA NEGOZIO (IMPORTANTE - usa queste per rispondere a prezzi, dipendenti, regole):
+INFO EXTRA NEGOZIO (usala per prezzi, dipendenti, regole):
 ${extraInfo || 'Nessuna info extra'}
 
-REGOLE:
-Se titolare (${tenant.owner_phone}) dice aggiungi/mettila -> check_availability poi book_appointment source="owner-voice"
-Se cliente -> check_availability poi book_appointment source="ai-auto"
-SEMPRE check prima di book.
-Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa, usa INFO EXTRA.
+REGOLE FERREE:
+1. Parli SOLO ITALIANO. Se cliente parla inglese, rispondi comunque in italiano.
+2. Risposte brevi: max 2 frasi.
+3. Cliente chiede appuntamento: chiedi nome, servizio, giorno/ora -> chiama check_availability -> poi book_appointment.
+4. Se titolare (${tenant.owner_phone}) dice "aggiungi/mettila" -> source="owner-voice" altrimenti "ai-auto".
+5. Non inventare prezzi: se non li sai, di "devo verificare con il titolare".
+6. Mai dire che sei AI di VAPI/OpenAI. Sei l'assistente di ${tenant.business_name}.
 `.trim();
 
     const vapiKey = process.env.VAPI_PRIVATE_KEY || process.env.VAPI_API_KEY;
 
     const payload = {
       name: `Rispondo - ${tenant.business_name} - ${tenant.id.slice(0,8)}`,
-      voice: { provider: "11labs", voiceId: "21m00Tcm4TlvDq8ikWAM" },
+      // ITALIAN VOICE FIX
+      voice: { 
+        provider: "11labs", 
+        voiceId: "XrExE9yKIg1WjnnlVkGX",
+        model: "eleven_multilingual_v2"
+      },
+      // ITALIAN TRANSCRIBER FIX - THIS FIXES HEARING
+      transcriber: {
+        provider: "deepgram",
+        model: "nova-2",
+        language: "it",
+        smartFormat: true
+      },
       model: {
         provider: "openai",
         model: "gpt-4o",
@@ -61,11 +78,11 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
         functions: [
           {
             name: 'check_availability',
-            description: 'Check free slot',
+            description: 'Controlla disponibilità slot',
             parameters: {
               type: 'object',
               properties: {
-                datetime: { type: 'string' },
+                datetime: { type: 'string', description: 'ISO datetime' },
                 date: { type: 'string' },
                 time: { type: 'string' },
                 duration: { type: 'number' },
@@ -76,7 +93,7 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
           },
           {
             name: 'book_appointment',
-            description: 'Book after check',
+            description: 'Prenota dopo check',
             parameters: {
               type: 'object',
               properties: {
@@ -85,21 +102,23 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
                 service: { type: 'string' },
                 datetime: { type: 'string' },
                 tenant_id: { type: 'string' },
-                source: { type: 'string' }
+                source: { type: 'string', enum: ["ai-auto", "owner-voice"] }
               },
-              required: ['tenant_id','source']
+              required: ['tenant_id','source','customer_name','datetime']
             }
           }
         ]
       },
-      firstMessage: `Ciao, ${tenant.business_name}, sono l'assistente, come posso aiutarti?`,
-      serverUrl: `${siteUrl}/api/vapi/webhook`
+      firstMessage: `Ciao, sono l'assistente di ${tenant.business_name}, come posso aiutarti?`,
+      firstMessageMode: "assistant-speaks-first",
+      serverUrl: `${siteUrl}/api/vapi/webhook`,
+      language: "it",
+      backgroundDenoisingEnabled: true
     };
 
     let vapiId = tenant.vapi_assistant_id;
     let vapiData;
 
-    // If assistant already exists, UPDATE it (no duplicate)
     if (vapiId) {
       const updateRes = await fetch(`https://api.vapi.ai/assistant/${vapiId}`, {
         method: 'PATCH',
@@ -109,8 +128,6 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
       const updateTxt = await updateRes.text();
       console.log('SYNC VAPI UPDATE', updateRes.status, updateTxt);
       try { vapiData = JSON.parse(updateTxt); } catch { vapiData = { raw: updateTxt }; }
-
-      // If update failed because ID not found, fallback to create
       if (!updateRes.ok && updateRes.status === 404) {
         vapiId = null;
       } else {
@@ -121,7 +138,6 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
       }
     }
 
-    // CREATE only if no existing ID
     if (!vapiId) {
       const vapiRes = await fetch('https://api.vapi.ai/assistant', {
         method: 'POST',
@@ -131,7 +147,6 @@ Rispondi sempre in italiano, cordiale e breve. Se chiedono prezzo o chi fa cosa,
       const txt = await vapiRes.text();
       console.log('SYNC VAPI CREATE', vapiRes.status, txt);
       try { vapiData = JSON.parse(txt); } catch { vapiData = { raw: txt }; }
-
       if (!vapiRes.ok || !vapiData.id) {
         return Response.json({ error: 'VAPI create failed', status: vapiRes.status, details: vapiData }, { status: 500 });
       }
