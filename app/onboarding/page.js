@@ -18,6 +18,39 @@ const DAYS = [
   { key: 'dom', label: 'Domenica' },
 ];
 
+// SERVICES BY CATEGORY - THIS IS SOURCE OF TRUTH
+const SERVICES_BY_CATEGORY = {
+  salone: [
+    { name: 'Taglio', duration: 30 },
+    { name: 'Piega', duration: 45 },
+    { name: 'Colore', duration: 90 }
+  ],
+  ristorante: [
+    { name: 'Tavolo Pranzo', duration: 90 },
+    { name: 'Tavolo Cena', duration: 120 },
+    { name: 'Aperitivo', duration: 60 }
+  ],
+  officina: [
+    { name: 'Tagliando', duration: 60 },
+    { name: 'Cambio gomme', duration: 45 },
+    { name: 'Diagnosi', duration: 30 }
+  ],
+  dentista: [
+    { name: 'Visita', duration: 30 },
+    { name: 'Pulizia', duration: 45 },
+    { name: 'Otturazione', duration: 60 }
+  ],
+  palestra: [
+    { name: 'Prova gratuita', duration: 60 },
+    { name: 'Personal Trainer', duration: 60 },
+    { name: 'Scheda', duration: 30 }
+  ],
+  altro: [
+    { name: 'Appuntamento', duration: 30 },
+    { name: 'Consulenza', duration: 45 }
+  ]
+};
+
 export default function OnboardingPage() {
   const [tenant, setTenant] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,7 +65,17 @@ export default function OnboardingPage() {
       if (!profile?.tenant_id) { setLoading(false); return; }
       const { data: t } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single();
       if (!t) { setLoading(false); return; }
-      if (!t.services) t.services = [{ name: 'Taglio', duration: 30 }, { name: 'Piega', duration: 45 }];
+
+      // FIX: set services based on category if empty or mismatched
+      const allowed = ['salone','ristorante','officina','dentista','palestra','altro'];
+      if (!allowed.includes(t.category)) t.category = 'salone';
+
+      // If services empty OR services are for wrong category, fix it
+      const cat = t.category;
+      if (!t.services || t.services.length === 0) {
+        t.services = SERVICES_BY_CATEGORY[cat] || SERVICES_BY_CATEGORY.altro;
+      }
+
       if (!t.opening_hours) t.opening_hours = {
         lun: { open: '09:00', close: '19:00', closed: false },
         mar: { open: '09:00', close: '19:00', closed: false },
@@ -42,8 +85,7 @@ export default function OnboardingPage() {
         sab: { open: '09:00', close: '18:00', closed: false },
         dom: { open: '09:00', close: '13:00', closed: true }
       };
-      const allowed = ['salone','ristorante','officina','dentista','palestra','altro'];
-      if (!allowed.includes(t.category)) t.category = 'salone';
+
       setTenant(t);
       const { data: know } = await supabase.from('tenant_knowledge').select('info').eq('tenant_id', t.id).maybeSingle();
       if (know?.info) setExtraInfo(know.info);
@@ -53,6 +95,16 @@ export default function OnboardingPage() {
   }, []);
 
   const updateField = (field, value) => setTenant(prev => ({...prev, [field]: value }));
+
+  const handleCategoryChange = (newCat) => {
+    // THIS IS THE KEY FIX - category dropdown controls services, not business name
+    setTenant(prev => ({
+     ...prev,
+      category: newCat,
+      services: SERVICES_BY_CATEGORY[newCat] || SERVICES_BY_CATEGORY.altro
+    }));
+  };
+
   const updateService = (idx, field, value) => {
     const newServices = [...tenant.services];
     newServices[idx][field] = value;
@@ -124,22 +176,22 @@ export default function OnboardingPage() {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <label style={{ fontWeight: 700, fontSize: 13 }}>Categoria</label>
-          <select value={tenant.category||'salone'} onChange={e=>updateField('category', e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '1px solid #e2e8f0' }}>
+          <label style={{ fontWeight: 700, fontSize: 13 }}>Categoria (decide i servizi)</label>
+          <select value={tenant.category||'salone'} onChange={e=>handleCategoryChange(e.target.value)} style={{ width: '100%', marginTop: 6, padding: 12, borderRadius: 10, border: '2px solid black', fontWeight: 700 }}>
             <option value="salone">Parrucchiere / Salone</option>
-            <option value="ristorante">Ristorante</option>
+            <option value="ristorante">Ristorante / Pizzeria / Trattoria</option>
             <option value="officina">Officina / Servizi</option>
             <option value="dentista">Dentista / Studio</option>
             <option value="palestra">Palestra</option>
             <option value="altro">Altro</option>
           </select>
+          <div style={{fontSize: 11, color: '#22c55e', marginTop: 6, fontWeight: 600}}>✓ I servizi sotto si aggiornano automaticamente quando cambi categoria</div>
         </div>
 
         <div style={{ marginTop: 16, border: '2px solid #facc15', background: '#fefce8', borderRadius: 12, padding: 16 }}>
           <label style={{ fontWeight: 900, fontSize: 14 }}>🧠 Info extra sul tuo negozio - Rende l'AI 10x più intelligente</label>
           <p style={{ fontSize: 11, color: '#854d0e', marginTop: 4 }}>Scrivi tutto: prezzi, dipendenti, regole. Es: "Taglio 25€, Colore 60€, Anna fa solo colore martedì/giovedì, Luca fa barba. Chiusi lunedì mattina. Parcheggio dietro. Solo contanti. Siamo in via Roma 12"</p>
           <textarea value={extraInfo} onChange={e=>setExtraInfo(e.target.value)} placeholder="Es: Abbiamo 3 dipendenti: Anna fa colore, Luca fa barba e taglio uomo. Prezzo taglio 25€, balayage 120€. Chiusi lunedì. Parcheggio dietro negozio..." style={{ width: '100%', marginTop: 10, padding: 12, borderRadius: 10, border: '1px solid #eab308', minHeight: 110, fontSize: 13 }} />
-          <div style={{fontSize: 11, color: '#a16207', marginTop: 6}}>L'AI userà queste info per rispondere a "quanto costa?" "chi fa barba?" ecc.</div>
         </div>
 
         <div style={{ marginTop: 12 }}>
@@ -149,7 +201,7 @@ export default function OnboardingPage() {
 
         <div style={{ marginTop: 28 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label style={{ fontWeight: 800, fontSize: 14 }}>Servizi e durata</label>
+            <label style={{ fontWeight: 800, fontSize: 14 }}>Servizi e durata {tenant.category === 'ristorante'? '(Tavoli)' : '(Servizi)'} - puoi modificare</label>
             <button onClick={addService} style={{ fontSize: 12, background: 'black', color: 'white', border: 0, padding: '6px 10px', borderRadius: 8, cursor: 'pointer' }}>+ Aggiungi</button>
           </div>
           {(tenant.services||[]).map((s, i) => (
@@ -181,19 +233,6 @@ export default function OnboardingPage() {
         <button onClick={save} disabled={saving} style={{ marginTop: 28, width: '100%', background: 'black', color: 'white', padding: 14, borderRadius: 12, fontWeight: 800, fontSize: 15, cursor: 'pointer', opacity: saving?0.6:1 }}>
           {saving? 'Salvo e aggiorno AI...' : 'Salva e vai al Dashboard →'}
         </button>
-
-        <div style={{marginTop:32,border:'1px solid #bbf7d0',borderRadius:12,padding:16,background:'#f0fdf4'}}>
-          <h3 style={{margin:0,fontSize:15,fontWeight:800}}>📞 Inoltro dopo 15 sec?</h3>
-          <div style={{marginTop:12,background:'black',color:'white',padding:12,borderRadius:8,fontFamily:'monospace',fontSize:13}}>
-            <div>Componi: **61*+1NUMEROVAPI*11*15#</div>
-          </div>
-          <div style={{marginTop:10,fontSize:12,display:'grid',gap:4}}>
-            <div>✅ Rispondi entro 15 sec → parli tu</div>
-            <div>🤖 Non rispondi → va ad AI</div>
-            <div>🔧 Disattiva: ##61#</div>
-          </div>
-        </div>
-
       </div>
     </div>
   );
