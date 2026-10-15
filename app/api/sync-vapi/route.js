@@ -21,6 +21,8 @@ function getSystemPrompt(tenant, knowledge) {
 
   if (isRisto) {
     return `
+REGOLA 1 INVIOLABILE: Parli SEMPRE e SOLO in ITALIANO. MAI in inglese.
+
 Sei l'assistente vocale di ${businessName}, ristorante a ${city}.
 ${knowledgeText}
 === MODALITA' RISTORANTE - SEI UN RISTORANTE ===
@@ -49,8 +51,9 @@ REGOLE:
 - Non inventare disponibilità.
 `;
   } else {
-    // SALONE / ALTRO
     return `
+REGOLA 1 INVIOLABILE: Parli SEMPRE e SOLO in ITALIANO. MAI in inglese.
+
 Sei l'assistente vocale di ${businessName} a ${city}.
 ${knowledgeText}
 Servizi: ${services}
@@ -137,7 +140,11 @@ export async function POST(req) {
         tools,
         toolIds: undefined
       },
-      voice: { provider: '11labs', voiceId: 'burt' },
+      // ADDED TO LOCK ITALIAN - these 3 lines were missing
+      voice: { provider: '11labs', voiceId: 'burt', model: 'eleven_multilingual_v2' },
+      transcriber: { provider: 'deepgram', model: 'nova-2', language: 'it' },
+      language: 'it',
+      firstMessageMode: 'assistant-speaks-first',
       firstMessage: tenant.category === 'ristorante'
         ? `Ciao! Qui ${tenant.business_name}, per quante persone vuoi prenotare?`
         : `Ciao! Qui ${tenant.business_name}, come posso aiutarti a prenotare?`,
@@ -149,7 +156,6 @@ export async function POST(req) {
     let mode = 'updated';
 
     if (!vapiAssistantId) {
-      // CREATE
       const res = await fetch('https://api.vapi.ai/assistant', {
         method: 'POST',
         headers: { Authorization: `Bearer ${VAPI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -163,7 +169,6 @@ export async function POST(req) {
       vapiAssistantId = data.id;
       mode = 'created';
     } else {
-      // UPDATE
       const res = await fetch(`https://api.vapi.ai/assistant/${vapiAssistantId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${VAPI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -172,7 +177,6 @@ export async function POST(req) {
       const data = await res.json();
       if (!res.ok) {
         console.error('VAPI UPDATE ERROR', data);
-        // If assistant not found, recreate
         if (res.status === 404) {
           await supabase.from('tenants').update({ vapi_assistant_id: null }).eq('id', tenantId);
           return NextResponse.json({ error: 'assistant not found, cleared id, retry', details: data }, { status: 404 });
